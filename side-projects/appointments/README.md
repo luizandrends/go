@@ -6,7 +6,11 @@ API de agendamentos em Go, construída como projeto de estudo com foco em **arqu
 
 - **Go** 1.27
 - **[go-chi/chi](https://github.com/go-chi/chi)** v5 — roteamento e middlewares
-- Persistência planejada: **PostgreSQL** e **Redis** (ainda em stubs)
+- **[pgx/v5](https://github.com/jackc/pgx)** — driver/pool de conexão PostgreSQL
+- **[tern](https://github.com/jackc/tern)** — migrações de banco (SQL versionado)
+- **[sqlc](https://sqlc.dev)** — geração de código type-safe a partir do SQL (escolhido sobre squirrel; squirrel só entra se surgir query dinâmica)
+- **[google/uuid](https://github.com/google/uuid)** — identificadores UUID
+- **PostgreSQL** (via Docker) — Redis ainda planejado (stub)
 - Módulo: `github.com/luizandrends/appointments`
 
 ## Arquitetura
@@ -28,12 +32,14 @@ appointments/
         ├── handlers/           # camada HTTP (entrega)
         │   ├── router.go       # monta o chi.Router do módulo
         │   ├── in.go / out.go  # DTOs de entrada/saída
+        │   ├── adapters.go     # mapeamento DTO <-> domínio
         │   └── create_user_handler.go
-        ├── adapters/           # mapeamento DTO <-> domínio
         ├── models/             # entidade de domínio (User)
-        ├── services/           # regras de negócio (a implementar)
-        └── repositories/       # persistência (a implementar)
+        ├── services/           # regras de negócio (em construção)
+        └── repositories/       # persistência (em construção)
 ```
+
+As migrações do banco ficam em `shared/dependencies/postgres/migrations/` (gerenciadas pelo tern).
 
 ### Fluxo de uma request
 
@@ -42,13 +48,21 @@ HTTP body (JSON)
    │  json.Decode
    ▼
 CreateUserIn (DTO da camada HTTP)
-   │  adapter (ToUser)
+   │  in.requestToUser()      (método no DTO)
    ▼
 User (entidade de domínio)
    │
    ▼
-service  ──►  repository (postgres/redis)
+service  ──►  repository (postgres)
+   │
+   ▼
+User (domínio)
+   │  userToResponse(user)    (função pura)
+   ▼
+CreateUserOut (DTO de saída)
 ```
+
+> Regra de bolso aplicada nos adapters: conversão que **usa** o dado de origem vira método com receiver (`requestToUser`); conversão que **constrói** um novo valor vira função pura (`userToResponse`).
 
 ### Princípios adotados
 
@@ -66,36 +80,61 @@ go run ./shared/api/main.go
 
 O servidor sobe em `:8080` com timeouts de leitura/escrita configurados e os middlewares `Recoverer`, `RequestID` e `Logger`.
 
+## Banco de dados & Migrações
+
+Postgres sobe via Docker; o `postgres.go` conecta com `pgxpool`.
+
+```bash
+docker compose up -d
+```
+
+Migrações com tern (binário em `$(go env GOPATH)/bin/tern`):
+
+```bash
+tern migrate \
+  --config shared/dependencies/postgres/migrations/tern.conf \
+  --migrations shared/dependencies/postgres/migrations
+```
+
+Migrações aplicadas:
+
+- `001_create_table_users.sql` — cria a tabela `users`
+- `002_change_id_to_uuid.sql` — troca a PK de `serial` para `uuid` (`default gen_random_uuid()`)
+
 ## Endpoints
 
 ### `POST /users/create`
 
-Cria um usuário (atualmente ecoa o input; persistência a implementar).
+Cria um usuário (fluxo de camadas montado; persistência via sqlc em construção).
 
 ```bash
 curl -i -X POST http://localhost:8080/users/create \
   -H "Content-Type: application/json" \
   -d '{
     "username": "johndoe",
-    "id": "1",
     "cpf": "111.222.333-44",
     "email": "johndoe@test.com",
     "password": "my-secret-password"
   }'
 ```
 
-> `id` trafega como string por causa da tag `json:"id,string"`.
+> O `id` **não** é enviado pelo cliente — é um UUID gerado pelo banco (`gen_random_uuid()`) e retornado na resposta.
 
 ## Próximos passos
 
-- [ ] Finalizar o adapter `CreateUserIn -> User` (método `ToUser()` no DTO)
-- [ ] Corrigir `package` de `models/user.go` e remover a duplicação da entidade `User`
-- [ ] Implementar a camada `services` com hashing de senha (`golang.org/x/crypto/bcrypt`)
-- [ ] Definir a interface `UserService` no lado consumidor (handlers)
-- [ ] Implementar `repositories` com Postgres/Redis reais
-- [ ] Injeção de dependência: `service -> handler -> router -> shared`
-- [ ] Configurar `docker-compose.yaml` (Postgres + Redis)
+- [x] Adapters `CreateUserIn -> User` (`requestToUser`) e `User -> CreateUserOut` (`userToResponse`)
+- [x] Corrigir `package` de `models/user.go` e remover a duplicação da entidade `User`
+- [x] Conexão real com Postgres (`pgxpool`) + migrações com tern
+- [x] `id` como UUID gerado pelo banco
+- [ ] Migração `003` — remover coluna `name` duplicada e adicionar `unique` em `email`/`cpf`
+- [ ] `sqlc generate` — gerar o código de acesso (`db.Queries`) a partir do `query.sql`
+- [ ] Implementar `repositories` (mapeando `db.User` <-> `models.User`)
+- [ ] Camada `services` com struct + construtor e hashing de senha (`golang.org/x/crypto/bcrypt`)
+- [ ] Definir interfaces `UserService` (em handlers) e `UserRepository` (em services) no lado consumidor
+- [ ] Injeção de dependência via composition root no `main`: `repo -> service -> handler -> router -> shared`
+- [ ] Tratamento de erro no handler (remover `panic`, padronizar via `ApiResponse`)
+- [ ] Redis (planejado)
 
 ## Notas
 
-Projeto de estudo — algumas partes ainda são stubs (`RunDB` apenas loga; handlers ecoam o input). A prioridade atual é a arquitetura e o fluxo entre camadas.
+Projeto de estudo — o foco atual é arquitetura e o fluxo entre camadas. A persistência real (sqlc + repositories) e a injeção de dependência completa estão em construção; o handler ainda ecoa/monta a resposta sem gravar no banco.
