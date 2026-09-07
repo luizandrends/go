@@ -1,8 +1,11 @@
 package handlers
 
+import "uuid"
+
 type CreateUserIn struct {
 	Username string
-	ID       int64 `json:"id,string"`
+	Name     string
+	ID       uuid.UUID
 	CPF      string
 	Email    string
 	Password string

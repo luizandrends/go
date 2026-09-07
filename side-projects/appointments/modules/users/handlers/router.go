@@ -4,8 +4,6 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-type Password string
-
 func CreateUserRouter() chi.Router {
 	r := chi.NewRouter()
 
