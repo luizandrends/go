@@ -2,9 +2,9 @@ package handlers
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 
+	"github.com/luizandrends/appointments/modules/users/services"
 	"github.com/luizandrends/appointments/shared/utils"
 )
 
@@ -17,17 +17,16 @@ func handleCreateUser() http.HandlerFunc {
 			return
 		}
 
-		adapt := in.ToUser()
+		adaptIn := in.requestToUser()
 
-		fmt.Println(adapt)
+		usr, err := services.CreateUserServiceExec(adaptIn)
 
-		out := CreateUserOut{
-			ID:       in.ID,
-			Username: in.Username,
-			CPF:      in.CPF,
-			Email:    in.Email,
+		if err != nil {
+			panic(err)
 		}
 
-		utils.SendJSON(w, utils.ApiResponse[CreateUserOut]{Data: out}, http.StatusCreated)
+		adaptOut := userToResponse(usr)
+
+		utils.SendJSON(w, utils.ApiResponse[CreateUserOut]{Data: adaptOut}, http.StatusCreated)
 	}
 }
